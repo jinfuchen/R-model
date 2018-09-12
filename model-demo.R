@@ -1,3 +1,5 @@
+setwd('/Users/jinfu/Documents/workspace/R/R-model')
+
 library(foreign)
 library(caret)
 library(car)
@@ -6,63 +8,56 @@ library(rms)
 library(e1071)
 library(BiodiversityR)
 library(moments)
-
-data<-read.csv("*/qt50.csv")
+########## load data into dataframe
+data<-read.csv("./data/model.csv")
+########## summary data
+names(data)
+summary(data)
+##########Estimate budget for degrees of freedom
+floor(nrow(data)/15)
+#Check the skew and kurtosis of the dependent variable
 skewness(data$post_bugs)
 kurtosis(data$post_bugs)
 ###drop categorical and data with inf
 drop=c("comp","subsystem","mean_discussion","mean_revspeed")
 data=data[,!(names(data) %in% drop)]
-
 drop2=c("post_bugs")
-#newdata=data[,!(names(data) %in% drop2)]
-
 independant=data[,!(names(data) %in% drop2)]
 
-##########correlation 
+##########Correlation analysis
 correlations <- cor(independant, method="spearman") 
 highCorr <- findCorrelation(correlations, cutoff = .75)
 
 low_cor_names=names(independant[, -highCorr])
 low_cor_data= independant[(names(independant) %in% low_cor_names)]
 dataforredun=low_cor_data
-#############or varclus
+#############variable clustering analysis
 vcobj = varclus ( ~., data = independant ,trans ="abs")
 plot(vcobj)
 abline(h=0.25, col="red")
-picked_metrics=c("median_minexp","owner_more_author","actor_ownership","median_voterscore","prior_bugs", "complexity","minor_wrote_no_major_revd","entropy", "actors","self_reviews","review_rate","size","minor_actors", "minor" )
-dataforredun=data[,(names(data) %in% picked_metrics)]
 
-#########start redun
+######### redundancy analysis
 redun_obj = redun (~. ,data = dataforredun ,nk =0)
-after_redun= dataforredun[,!(names(dataforredun) %in% redun_obj $Out)]
+after_redun= dataforredun[,!(names(dataforredun) %in% redun_obj)]
 
-############model
+############ model building
+#form=as.formula(paste("post_bugs~",paste(names(after_redun)),collapse="+"))
 form=as.formula(paste("post_bugs>0~",paste(names(after_redun),collapse="+")))
-model=glm(formula=form, data=log10(data+1), family = binomial(link = "logit"))
-deviancepercentage(model)
-
-###################lrm
+#form <- as.formula(paste("post_bugs~",paste(paste("rcs(",names(after_redun),",0)"),collapse="+")))
+#fit = ols(form, data = log10(data+1) , x=T ,y=T )
 fit = lrm(form, data = log10(data+1) , x=T ,y=T )
+summary(fit)
+########## Run the bootstrapped optimism calculations
+num_iter = 1000
+validate(fit, B=num_iter)
+######### Estimate power of explanatory variables
+anova(fit, test ="Chisq")
 
-
-############model ols
-predictform=as.formula(paste("post_bugs~",paste(paste("rcs(",names(after_redun),",0)"),collapse="+")))
-fit = ols (predictform, data = data , x=T ,y=T )
-validate(fit, B=100, bw=TRUE )
-validate(fit, B=100)
-anova ( fit , test ="Chisq")
-bootcov_obj = bootcov( fit , B=100, x=T ,y=T )
-response_curve = Predict(bootcov_obj,size)
-plot(response_curve)
-
-#####################randomforest
+#####################important variable
 rf.fit= randomForest(x=after_redun, y=data$post_bugs>0, ntree=100, type='classification', importance=TRUE)
 predictions <- predict(rf.fit, data,type="response")
-print(rf.fit)
 TP = sum((predictions>0.5) & (data$post_bugs>0))
 precision = TP / sum((predictions>0.5))
 recall = TP / sum(data$post_bugs>0)
 importance <- importance(rf.fit, type=1, class="TRUE",scale=FALSE)
 importance <- as.data.frame(importance)
-importance
